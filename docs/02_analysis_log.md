@@ -13,3 +13,31 @@ The regional gap is descriptive only. The current generator draws store-level GP
 - Check that aggregate GP margin is revenue-weighted.
 - Inspect the distribution of store-level margins before selecting underperformers.
 - Redesign the generator to include transaction-level commercial drivers, then document which patterns were intentionally simulated.
+
+## 2026-10-30 — Baseline data audit
+
+The initial dataset contains 60 fictional stores and
+1,260 store-month financial records covering January
+2025 to September 2026.
+
+The baseline audit returned:
+- Duplicate store-month keys: 0
+- Missing store references: 0
+- Pre-opening financial records: 0
+- Missing financial amounts: 0
+- Invalid sales/COGS records: 0
+
+All six automated tests passed.
+
+The current dataset is suitable for validating the
+initial store-month reporting workflow. However,
+it does not contain transaction-level sales or
+product-level cost information.
+
+This limits our ability to explain gross margin
+differences through product mix, discounting,
+or unit cost movements.
+
+Next decision:
+Extend the data model to transaction level while
+preserving the existing baseline for comparison.

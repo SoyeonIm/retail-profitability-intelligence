@@ -1,0 +1,21 @@
+
+{
+  "dataset_version": "v1",
+  "random_seed": 42,
+  "start_date": "2025-01-01",
+  "end_date": "2026-09-30",
+  "store_count": 60,
+  "product_count": 500,
+  "currency": "NZD",
+  "prices_exclude_gst": true,
+  "product_categories": [
+    "Health",
+    "Beauty",
+    "Skincare",
+    "Personal Care",
+    "Vitamins",
+    "Household"
+  ],
+  "returns_enabled": true,
+  "promotions_enabled": true
+}
