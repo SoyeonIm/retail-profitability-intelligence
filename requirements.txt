@@ -2,3 +2,5 @@ duckdb>=1.1,<2
 pandas>=2.2,<3
 numpy>=1.26,<3
 pytest>=8,<10
+streamlit>=1.66,<2
+plotly>=6,<7
