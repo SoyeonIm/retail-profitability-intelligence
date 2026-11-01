@@ -4,8 +4,16 @@
 import pandas as pd
 import streamlit as st
 
-from src.reporting_data import load_reporting_data
-from src.dashboard_metrics import calculate_monthly_kpis
+from src.reporting_data import (
+    load_reporting_data,
+    load_category_reporting_data,
+)
+from src.dashboard_metrics import (
+    calculate_monthly_kpis,
+    calculate_store_category_metrics,
+    prepare_store_margin_heatmap,
+    calculate_heatmap_performance_snapshot
+)
 from src.dashboard_theme import dashboard_css
 from src.dashboard_charts import (
     regional_benchmark_chart,
@@ -14,6 +22,10 @@ from src.dashboard_charts import (
     monthly_margin_chart,
     store_performance_scatter_chart,
     investigation_priority_chart,
+    store_margin_trend_chart,
+    store_category_mix_chart,
+    store_category_margin_chart,
+    store_margin_heatmap_chart
 )
 
 
@@ -438,3 +450,393 @@ st.caption(
     "performance signals. Potential GP gaps are benchmark "
     "scenarios, not confirmed losses or recoverable savings."
 )
+
+
+# ---------------------------------------------------------
+# 13. STORE INVESTIGATION DETAIL
+# ---------------------------------------------------------
+
+st.divider()
+st.subheader("Store Investigation Detail")
+
+st.caption(
+    "Examine individual store performance against "
+    "national and regional profitability benchmarks."
+)
+
+# Store selection is independent of the scatter plot's
+# regional filter.
+store_options = sorted(store_month["store_id"].unique())
+
+selected_store_id = st.selectbox(
+    "Select Store",
+    options=store_options,
+    index=store_options.index("S044")
+    if "S044" in store_options
+    else 0,
+    key="investigation_store",
+)
+
+selected_store_data = store_month.loc[
+    store_month["store_id"] == selected_store_id
+]
+
+if len(selected_store_data) != 1:
+    st.error(
+        "Expected exactly one reporting row "
+        "for the selected store and month."
+    )
+    st.stop()
+
+selected_store = selected_store_data.iloc[0]
+
+store_sales_nzd = selected_store["net_sales_cents"] / 100
+store_gp_nzd = selected_store["gross_profit_cents"] / 100
+
+store_margin_pct = float(selected_store["gp_margin_pct"])
+store_nz_gap_pp = float(selected_store["store_vs_nz_gap_pp"])
+store_region_gap_pp = float(
+    selected_store["store_vs_region_gap_pp"]
+)
+
+st.caption(
+    f"Region: {selected_store['region']} | "
+    f"Reporting Month: {selected_month:%B %Y}"
+)
+
+detail_col1, detail_col2, detail_col3, detail_col4 = (
+    st.columns(4)
+)
+
+detail_col1.metric(
+    "Net Sales",
+    f"NZ${store_sales_nzd:,.2f}",
+)
+
+detail_col2.metric(
+    "Gross Profit",
+    f"NZ${store_gp_nzd:,.2f}",
+)
+
+detail_col3.metric(
+    "GP Margin",
+    f"{store_margin_pct:.2f}%",
+)
+
+detail_col4.metric(
+    "vs NZ Benchmark",
+    f"{store_nz_gap_pp:+.2f} pp",
+)
+
+st.caption(
+    f"Regional benchmark variance: "
+    f"{store_region_gap_pp:+.2f} percentage points. "
+    "Benchmark differences are diagnostic signals, "
+    "not confirmed causes of underperformance."
+)
+
+
+# ---------------------------------------------------------
+# 14. STORE MONTHLY PROFITABILITY TREND
+# ---------------------------------------------------------
+
+st.markdown("#### Monthly Profitability Trend")
+
+# Use the complete store history, but exclude months
+# after the selected reporting month.
+store_history = store.loc[
+    (store["store_id"] == selected_store_id)
+    & (
+        pd.to_datetime(store["month"]).dt.date
+        <= selected_month
+    )
+].copy()
+
+if store_history.empty:
+    st.warning(
+        "No historical reporting data is available "
+        "for the selected store."
+    )
+else:
+    trend_fig = store_margin_trend_chart(store_history)
+
+    st.plotly_chart(
+        trend_fig,
+        width="stretch",
+        config={"displayModeBar": False},
+    )
+
+    st.caption(
+        "Monthly store GP margin compared with the "
+        "sales-weighted regional and NZ benchmarks. "
+        "Historical trends end at the selected reporting month."
+    )
+
+
+# ---------------------------------------------------------
+# 15. STORE CATEGORY PROFITABILITY
+# ---------------------------------------------------------
+
+st.markdown("#### Category Profitability")
+
+@st.cache_data(show_spinner="Loading category profitability...")
+def get_category_data():
+    return load_category_reporting_data()
+
+
+category_data = get_category_data()
+
+category_month = category_data.loc[
+    (category_data["store_id"] == selected_store_id)
+    & (
+        pd.to_datetime(category_data["month"]).dt.date
+        == selected_month
+    )
+].copy()
+
+if category_month.empty:
+    st.warning(
+        "No category profitability data is available "
+        "for the selected store and reporting month."
+    )
+else:
+    category_metrics = calculate_store_category_metrics(
+        category_month
+    )
+
+    # Reconcile category totals to the selected store.
+    if (
+        category_metrics["net_sales_cents"].sum()
+        != selected_store["net_sales_cents"]
+        or category_metrics["gross_profit_cents"].sum()
+        != selected_store["gross_profit_cents"]
+    ):
+        st.error(
+            "Category totals do not reconcile to store reporting."
+        )
+        st.stop()
+
+    category_col1, category_col2 = st.columns(2)
+
+    with category_col1:
+        st.plotly_chart(
+            store_category_mix_chart(category_metrics),
+            width="stretch",
+            config={"displayModeBar": False},
+        )
+
+    with category_col2:
+        st.plotly_chart(
+            store_category_margin_chart(category_metrics),
+            width="stretch",
+            config={"displayModeBar": False},
+        )
+
+    st.caption(
+        "Sales Mix is each category's share of store net sales. "
+        "GP Contribution is each category's share of store gross "
+        "profit. Category margins are calculated from validated "
+        "net sales and gross profit in integer NZD cents."
+    )
+
+
+# ---------------------------------------------------------
+# 16. STORE PROFITABILITY HEATMAP
+# ---------------------------------------------------------
+
+st.divider()
+st.subheader("Store Profitability Heatmap")
+
+st.caption(
+    "Explore monthly store GP margin differences against "
+    "the NZ sales-weighted benchmark."
+)
+
+heatmap_regions = sorted(store["region"].unique())
+
+selected_heatmap_regions = st.multiselect(
+    "Filter Heatmap by Region",
+    options=heatmap_regions,
+    default=heatmap_regions,
+    key="heatmap_region_filter",
+)
+
+
+heatmap_col1, heatmap_col2 = st.columns(2)
+
+with heatmap_col1:
+    heatmap_period = st.selectbox(
+        "Analysis Period",
+        options=[6, 12, 21],
+        index=0,
+        format_func=lambda value: (
+            f"Last {value} Months"
+            if value < 21
+            else "All Available Months"
+        ),
+        key="heatmap_period",
+    )
+
+with heatmap_col2:
+    heatmap_store_count = st.selectbox(
+        "Number of Stores",
+        options=[10, 20, 30, 60],
+        index=1,
+      format_func=lambda value: (
+    f"{value} Lowest-Ranked Stores"
+    if value < 60
+    else "All Stores"
+),
+        key="heatmap_store_count",
+    )
+
+heatmap_data = prepare_store_margin_heatmap(
+    store,
+    end_month=selected_month,
+)
+
+heatmap_data = heatmap_data.loc[
+    heatmap_data["region"].isin(selected_heatmap_regions)
+].copy()
+
+if not heatmap_data.empty:
+    available_months = sorted(
+        heatmap_data["month"].unique()
+    )
+
+    recent_months = available_months[-heatmap_period:]
+
+    heatmap_data = heatmap_data.loc[
+        heatmap_data["month"].isin(recent_months)
+    ].copy()
+
+    # Rank stores by sales-weighted GP margin gap
+    # across the selected analysis period.
+    store_rank = (
+        heatmap_data.groupby("store_id")
+        .agg(
+            total_sales=("net_sales_cents", "sum"),
+            total_gp=("gross_profit_cents", "sum"),
+            benchmark_gp=(
+                "nz_gp_margin_pct",
+                lambda values: 0.0,
+            ),
+        )
+    )
+
+    # Calculate each store's period-weighted benchmark
+    # using its own monthly sales as weights.
+    weighted_benchmark = (
+        heatmap_data.assign(
+            weighted_benchmark_gp=(
+                heatmap_data["net_sales_cents"]
+                * heatmap_data["nz_gp_margin_pct"]
+            )
+        )
+        .groupby("store_id")[
+            "weighted_benchmark_gp"
+        ]
+        .sum()
+    )
+
+    store_rank["benchmark_gp"] = weighted_benchmark
+
+    store_rank["period_gap_pp"] = (
+        100
+        * store_rank["total_gp"]
+        / store_rank["total_sales"]
+        - store_rank["benchmark_gp"]
+        / store_rank["total_sales"]
+    )
+
+    store_rank = store_rank.sort_values(
+        ["period_gap_pp", "total_sales"],
+        ascending=[True, False],
+    )
+
+    selected_stores = store_rank.head(
+        heatmap_store_count
+    ).index
+
+    heatmap_data = heatmap_data.loc[
+        heatmap_data["store_id"].isin(selected_stores)
+    ].copy()
+
+
+# ---------------------------------------------------------
+# HEATMAP PERFORMANCE SUMMARY
+# ---------------------------------------------------------
+
+
+if not heatmap_data.empty:
+    snapshot = calculate_heatmap_performance_snapshot(
+        heatmap_data
+    )
+
+    stores_below_benchmark = snapshot[
+        "stores_below_benchmark"
+    ]
+
+    persistent_underperformers = snapshot[
+        "persistent_underperformers"
+    ]
+
+    potential_gp_shortfall_nzd = snapshot[
+        "potential_gp_shortfall_nzd"
+    ]
+
+    st.markdown("#### Performance Snapshot")
+
+    kpi_col1, kpi_col2, kpi_col3 = st.columns(3)
+
+    with kpi_col1:
+        st.metric(
+            "Stores Below NZ Benchmark",
+            f"{stores_below_benchmark:,}",
+            help="Number of displayed stores below the NZ benchmark in the latest month.",
+        )
+
+    with kpi_col2:
+        st.metric(
+            "Persistent Underperformers",
+            f"{persistent_underperformers:,}",
+            help="Displayed stores below the NZ benchmark in every month of the selected period.",
+        )
+
+    with kpi_col3:
+        st.metric(
+            "Potential GP Shortfall",
+            f"NZ${potential_gp_shortfall_nzd:,.0f}",
+            help=(
+                "Hypothetical GP shortfall against the monthly "
+                "NZ sales-weighted benchmark, aggregated across "
+                "displayed stores and the selected period. "
+                "Not an actual loss or guaranteed opportunity."
+            ),
+        )
+
+    st.caption(
+        "Snapshot covers the displayed stores and selected analysis period. "
+        "Potential GP shortfall is a hypothetical benchmark comparison, "
+        "not a realised financial loss."
+    )
+
+if heatmap_data.empty:
+    st.info("Select at least one region to display the heatmap.")
+else:
+    heatmap_fig = store_margin_heatmap_chart(heatmap_data)
+
+    st.plotly_chart(
+        heatmap_fig,
+        width="stretch",
+        config={"displayModeBar": False},
+    )
+
+
+    st.caption(
+        "Each cell shows the store's GP margin gap against "
+        "the NZ sales-weighted benchmark, in percentage points. "
+        "Coral indicates below benchmark, while slate blue "
+        "indicates above benchmark. Period Gap is calculated "
+        "using sales-weighted margins across the selected months."
+    )

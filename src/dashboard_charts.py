@@ -523,3 +523,460 @@ def investigation_priority_chart(
     )
 
     return fig
+
+
+def store_margin_trend_chart(
+    store_history: pd.DataFrame,
+) -> go.Figure:
+    """Compare store margin with NZ and regional benchmarks."""
+
+    required_columns = {
+        "store_id",
+        "month",
+        "gp_margin_pct",
+        "nz_gp_margin_pct",
+        "region_gp_margin_pct",
+    }
+
+    missing = required_columns - set(store_history.columns)
+
+    if missing:
+        raise ValueError(
+            f"Missing required columns: {sorted(missing)}"
+        )
+
+    if store_history.empty:
+        raise ValueError("Store history is empty.")
+
+    if store_history["store_id"].nunique() != 1:
+        raise ValueError("Expected exactly one store.")
+
+    if store_history[list(required_columns)].isna().any().any():
+        raise ValueError("Store trend contains missing values.")
+
+    chart_data = store_history.copy()
+    chart_data["month"] = pd.to_datetime(chart_data["month"])
+
+    if chart_data["month"].duplicated().any():
+        raise ValueError("Duplicate reporting months.")
+
+    chart_data = chart_data.sort_values("month")
+
+    fig = go.Figure()
+
+    series = [
+        ("gp_margin_pct", "Selected Store", "#2563EB"),
+        ("region_gp_margin_pct", "Regional Benchmark", "#F59E0B"),
+        ("nz_gp_margin_pct", "NZ Benchmark", "#64748B"),
+    ]
+
+    for column, label, color in series:
+        fig.add_trace(
+            go.Scatter(
+                x=chart_data["month"],
+                y=chart_data[column],
+                mode="lines+markers",
+                name=label,
+                line=dict(color=color, width=2.5),
+                marker=dict(size=5),
+                hovertemplate=(
+                    "%{x|%b %Y}"
+                    "<br>%{y:.2f}%"
+                    "<extra>" + label + "</extra>"
+                ),
+            )
+        )
+
+    fig.update_layout(
+        title="Monthly GP Margin vs Benchmarks",
+        xaxis_title=None,
+        yaxis_title="GP Margin (%)",
+        hovermode="x unified",
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="left",
+            x=0,
+        ),
+        height=430,
+        margin=dict(l=20, r=20, t=85, b=30),
+    )
+
+    fig.update_yaxes(ticksuffix="%")
+
+    return apply_chart_theme(fig)
+
+
+def store_category_mix_chart(
+    category_data: pd.DataFrame,
+) -> go.Figure:
+    """Compare sales mix and GP contribution by category."""
+
+    required = {
+        "category",
+        "sales_mix_pct",
+        "gp_contribution_pct",
+    }
+
+    missing = required - set(category_data.columns)
+
+    if missing:
+        raise ValueError(
+            f"Missing required columns: {sorted(missing)}"
+        )
+
+    if category_data.empty:
+        raise ValueError("Category data is empty.")
+
+    if category_data["category"].duplicated().any():
+        raise ValueError("Duplicate categories.")
+
+    if category_data[
+        ["sales_mix_pct", "gp_contribution_pct"]
+    ].isna().any().any():
+        raise ValueError("Missing category mix values.")
+
+    fig = go.Figure()
+
+    fig.add_trace(
+        go.Bar(
+            x=category_data["category"],
+            y=category_data["sales_mix_pct"],
+            name="Sales Mix",
+            marker_color="#2563EB",
+            hovertemplate="%{x}<br>%{y:.2f}%<extra>Sales Mix</extra>",
+        )
+    )
+
+    fig.add_trace(
+        go.Bar(
+            x=category_data["category"],
+            y=category_data["gp_contribution_pct"],
+            name="GP Contribution",
+            marker_color="#F59E0B",
+            hovertemplate=(
+                "%{x}<br>%{y:.2f}%"
+                "<extra>GP Contribution</extra>"
+            ),
+        )
+    )
+
+    fig.update_layout(
+        title="Sales Mix vs GP Contribution",
+        barmode="group",
+        height=430,
+        margin=dict(l=20, r=20, t=65, b=45),
+        yaxis_title="Share (%)",
+    )
+
+    fig.update_yaxes(ticksuffix="%")
+
+    return apply_chart_theme(fig)
+
+
+def store_category_margin_chart(
+    category_data: pd.DataFrame,
+) -> go.Figure:
+    """Show category GP margins for the selected store-month."""
+
+    required = {"category", "gp_margin_pct"}
+
+    missing = required - set(category_data.columns)
+
+    if missing:
+        raise ValueError(
+            f"Missing required columns: {sorted(missing)}"
+        )
+
+    if category_data.empty:
+        raise ValueError("Category data is empty.")
+
+    if category_data["category"].duplicated().any():
+        raise ValueError("Duplicate categories.")
+
+    if category_data["gp_margin_pct"].isna().any():
+        raise ValueError("Missing category GP margin.")
+
+    fig = go.Figure()
+
+    fig.add_trace(
+        go.Bar(
+            x=category_data["category"],
+            y=category_data["gp_margin_pct"],
+            marker_color="#2563EB",
+            hovertemplate=(
+                "%{x}<br>GP Margin: %{y:.2f}%"
+                "<extra></extra>"
+            ),
+        )
+    )
+
+    fig.update_layout(
+        title="Category GP Margin",
+        height=430,
+        margin=dict(l=20, r=20, t=65, b=45),
+        yaxis_title="GP Margin (%)",
+        showlegend=False,
+    )
+
+    fig.update_yaxes(ticksuffix="%")
+
+    return apply_chart_theme(fig)
+
+
+def store_margin_heatmap_chart(
+    heatmap_data: pd.DataFrame,
+) -> go.Figure:
+    """Show monthly store margin gaps with aligned summary columns."""
+
+    from plotly.subplots import make_subplots
+
+    required = {
+        "store_id",
+        "region",
+        "month",
+        "net_sales_cents",
+        "gross_profit_cents",
+        "gp_margin_pct",
+        "nz_gp_margin_pct",
+        "store_vs_nz_gap_pp",
+    }
+
+    missing = required - set(heatmap_data.columns)
+    if missing:
+        raise ValueError(f"Missing heatmap columns: {sorted(missing)}")
+
+    if heatmap_data.empty:
+        raise ValueError("Heatmap data is empty.")
+
+    if heatmap_data[list(required)].isna().any().any():
+        raise ValueError("Heatmap contains missing values.")
+
+    data = heatmap_data.copy()
+    data["month"] = pd.to_datetime(data["month"])
+
+    if data.duplicated(["store_id", "month"]).any():
+        raise ValueError("Duplicate store-month records.")
+
+    if (data["net_sales_cents"] <= 0).any():
+        raise ValueError("Store net sales must be positive.")
+
+    if (
+        data.groupby("store_id")["region"].nunique() != 1
+    ).any():
+        raise ValueError("Each store must belong to one region.")
+
+    data["benchmark_gp_cents"] = (
+        data["net_sales_cents"]
+        * data["nz_gp_margin_pct"] / 100
+    )
+
+    ranking = data.groupby("store_id").agg(
+        region=("region", "first"),
+        total_sales=("net_sales_cents", "sum"),
+        total_gp=("gross_profit_cents", "sum"),
+        benchmark_gp=("benchmark_gp_cents", "sum"),
+        months_below=(
+            "store_vs_nz_gap_pp",
+            lambda values: int((values < 0).sum()),
+        ),
+    )
+
+    ranking["period_gap_pp"] = (
+        100
+        * (ranking["total_gp"] - ranking["benchmark_gp"])
+        / ranking["total_sales"]
+    )
+
+    ranking = ranking.sort_values(
+        ["period_gap_pp", "total_sales"],
+        ascending=[True, False],
+    )
+
+    stores = ranking.index.tolist()
+    months = sorted(data["month"].unique())
+
+    month_labels = [
+        pd.Timestamp(month).strftime("%b %Y")
+        for month in months
+    ]
+
+    store_labels = [
+        f"{store_id}  ·  {ranking.loc[store_id, 'region']}"
+        for store_id in stores
+    ]
+
+    gap_matrix = data.pivot(
+        index="store_id",
+        columns="month",
+        values="store_vs_nz_gap_pp",
+    ).reindex(index=stores, columns=months)
+
+    margin_matrix = data.pivot(
+        index="store_id",
+        columns="month",
+        values="gp_margin_pct",
+    ).reindex(index=stores, columns=months)
+
+    benchmark_matrix = data.pivot(
+        index="store_id",
+        columns="month",
+        values="nz_gp_margin_pct",
+    ).reindex(index=stores, columns=months)
+
+    customdata = [
+        [
+            [
+                float(margin_matrix.iloc[i, j]),
+                float(benchmark_matrix.iloc[i, j]),
+            ]
+            for j in range(len(months))
+        ]
+        for i in range(len(stores))
+    ]
+
+    show_values = len(months) <= 6
+
+    fig = make_subplots(
+        rows=1,
+        cols=3,
+        shared_yaxes=True,
+        horizontal_spacing=0.045,
+        column_widths=[0.72, 0.16, 0.12],
+        subplot_titles=[
+            "MONTHLY GP MARGIN GAP",
+            "PERIOD GAP",
+            "BELOW NZ",
+        ],
+    )
+
+    fig.add_trace(
+        go.Heatmap(
+            x=month_labels,
+            y=store_labels,
+            z=gap_matrix.to_numpy(),
+            customdata=customdata,
+            text=(
+                [
+                    [f"{value:+.1f}" for value in row]
+                    for row in gap_matrix.to_numpy()
+                ]
+                if show_values
+                else None
+            ),
+            texttemplate="%{text}" if show_values else None,
+            textfont=dict(size=11),
+            colorscale=[
+                [0.00, "#B65C65"],
+                [0.25, "#E6B3B0"],
+                [0.50, "#F7F5F2"],
+                [0.75, "#B9CCD9"],
+                [1.00, "#527C9B"],
+            ],
+            zmin=-4,
+            zmax=4,
+            zmid=0,
+            xgap=3,
+            ygap=3,
+            colorbar=dict(
+                title="Gap (pp)",
+                thickness=12,
+                len=0.7,
+                x=1.02,
+            ),
+            hovertemplate=(
+                "<b>%{y}</b><br>"
+                "Month: %{x}<br>"
+                "GP Margin: %{customdata[0]:.2f}%<br>"
+                "NZ Benchmark: %{customdata[1]:.2f}%<br>"
+                "Gap: %{z:+.2f} pp"
+                "<extra></extra>"
+            ),
+        ),
+        row=1,
+        col=1,
+    )
+
+    fig.add_trace(
+        go.Heatmap(
+            x=["Period Gap"],
+            y=store_labels,
+            z=[
+                [float(ranking.loc[s, "period_gap_pp"])]
+                for s in stores
+            ],
+            text=[
+                [f"{ranking.loc[s, 'period_gap_pp']:+.2f}"]
+                for s in stores
+            ],
+            texttemplate="%{text}",
+            textfont=dict(size=11, color="#334155"),
+            colorscale=[
+                [0.0, "#F4E5E5"],
+                [0.5, "#FFFFFF"],
+                [1.0, "#E3ECF3"],
+            ],
+            zmin=-4,
+            zmax=4,
+            showscale=False,
+            hovertemplate=(
+                "%{y}<br>Weighted Period Gap: %{z:+.2f} pp"
+                "<extra></extra>"
+            ),
+        ),
+        row=1,
+        col=2,
+    )
+
+    fig.add_trace(
+        go.Heatmap(
+            x=["Months Below"],
+            y=store_labels,
+            z=[
+                [int(ranking.loc[s, "months_below"])]
+                for s in stores
+            ],
+            text=[
+                [f"{int(ranking.loc[s, 'months_below'])}/{len(months)}"]
+                for s in stores
+            ],
+            texttemplate="%{text}",
+            textfont=dict(size=11, color="#334155"),
+            colorscale=[
+                [0.0, "#FFFFFF"],
+                [1.0, "#EDF1F5"],
+            ],
+            zmin=0,
+            zmax=len(months),
+            showscale=False,
+            hovertemplate=(
+                "%{y}<br>Months Below NZ: %{text}"
+                "<extra></extra>"
+            ),
+        ),
+        row=1,
+        col=3,
+    )
+
+    fig.update_layout(
+        title=dict(
+            text="Store Margin Performance | NZ Benchmark",
+            x=0,
+            xanchor="left",
+        ),
+        height=max(560, len(stores) * 31 + 180),
+        margin=dict(l=165, r=65, t=115, b=65),
+        paper_bgcolor="#FFFFFF",
+        plot_bgcolor="#FFFFFF",
+        showlegend=False,
+    )
+
+    fig.update_xaxes(showgrid=False)
+    fig.update_yaxes(
+        autorange="reversed",
+        showgrid=False,
+        tickfont=dict(size=11),
+    )
+
+    return apply_chart_theme(fig)

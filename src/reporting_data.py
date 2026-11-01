@@ -72,3 +72,57 @@ def load_reporting_data() -> dict[str, pd.DataFrame]:
 
     finally:
         con.close()
+
+
+def load_category_reporting_data() -> pd.DataFrame:
+    """Load store-month-category profitability from validated SQL."""
+
+    con = create_reporting_connection()
+
+    try:
+        category = con.execute(
+            """
+            SELECT
+                store_id,
+                month,
+                category,
+                net_sales_cents,
+                cogs_cents,
+                gross_profit_cents,
+                gp_margin_pct
+            FROM category_mart
+            ORDER BY month, store_id, category
+            """
+        ).df()
+
+        required_columns = {
+            "store_id",
+            "month",
+            "category",
+            "net_sales_cents",
+            "cogs_cents",
+            "gross_profit_cents",
+            "gp_margin_pct",
+        }
+
+        missing = required_columns - set(category.columns)
+
+        if missing:
+            raise ValueError(
+                f"Missing category columns: {sorted(missing)}"
+            )
+
+        if category.empty:
+            raise ValueError("Category reporting data is empty.")
+
+        if category.duplicated(
+            subset=["store_id", "month", "category"]
+        ).any():
+            raise ValueError(
+                "Duplicate store-month-category records."
+            )
+
+        return category
+
+    finally:
+        con.close()
