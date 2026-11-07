@@ -13,6 +13,7 @@ SQL_DIR = ROOT / "sql"
 # Dependency order matters: later views reference earlier views.
 REPORTING_VIEWS = [
     ("category_mart", "04_category_profitability.sql"),
+    ("margin_decomposition", "05_margin_decomposition.sql"),
     ("store_performance", "06_store_performance.sql"),
     ("regional_profitability", "07_regional_profitability.sql"),
     ("category_margin_drivers", "09_category_margin_drivers.sql"),
@@ -123,6 +124,90 @@ def load_category_reporting_data() -> pd.DataFrame:
             )
 
         return category
+
+    finally:
+        con.close()
+
+
+def load_margin_decomposition_data() -> pd.DataFrame:
+    """Load and validate store-month GP margin decomposition."""
+
+    con = create_reporting_connection()
+
+    try:
+        data = con.execute(
+            """
+            SELECT *
+            FROM margin_decomposition
+            ORDER BY month, store_id
+            """
+        ).df()
+
+        required_columns = {
+            "store_id",
+            "month",
+            "store_sales_cents",
+            "store_gp_cents",
+            "benchmark_total_sales_cents",
+            "benchmark_total_gp_cents",
+            "store_gp_margin_pct",
+            "benchmark_gp_margin_pct",
+            "mix_effect_pp",
+            "margin_effect_pp",
+            "explained_gap_pp",
+            "actual_gap_pp",
+            "reconciliation_residual_pp",
+        }
+
+        missing = required_columns - set(data.columns)
+
+        if missing:
+            raise ValueError(
+                f"Missing decomposition columns: {sorted(missing)}"
+            )
+
+        if data.empty:
+            raise ValueError(
+                "Margin decomposition data is empty."
+            )
+
+        if data[list(required_columns)].isna().any().any():
+            raise ValueError(
+                "Margin decomposition contains missing values."
+            )
+
+        if data.duplicated(
+            subset=["store_id", "month"]
+        ).any():
+            raise ValueError(
+                "Duplicate store-month decomposition records."
+            )
+
+        # The underlying SQL decomposition must reconcile.
+        tolerance_pp = 0.0001
+
+        if (
+            data["reconciliation_residual_pp"].abs()
+            > tolerance_pp
+        ).any():
+            raise ValueError(
+                "Margin decomposition does not reconcile."
+            )
+
+        # Validate the bridge independently using reported effects.
+        calculated_gap = (
+            data["mix_effect_pp"]
+            + data["margin_effect_pp"]
+        )
+
+        if (
+            calculated_gap - data["actual_gap_pp"]
+        ).abs().gt(tolerance_pp).any():
+            raise ValueError(
+                "Mix and margin effects do not match the actual GP gap."
+            )
+
+        return data
 
     finally:
         con.close()

@@ -7,6 +7,7 @@ import streamlit as st
 from src.reporting_data import (
     load_reporting_data,
     load_category_reporting_data,
+    load_margin_decomposition_data,
 )
 from src.dashboard_metrics import (
     calculate_monthly_kpis,
@@ -25,7 +26,8 @@ from src.dashboard_charts import (
     store_margin_trend_chart,
     store_category_mix_chart,
     store_category_margin_chart,
-    store_margin_heatmap_chart
+    store_margin_heatmap_chart,
+    gp_margin_waterfall_chart
 )
 
 
@@ -51,7 +53,13 @@ def get_data():
     return load_reporting_data()
 
 
+@st.cache_data(show_spinner="Loading margin decomposition...")
+def get_decomposition_data():
+    return load_margin_decomposition_data()
+
+
 data = get_data()
+decomposition_data = get_decomposition_data()
 
 store = data["store"]
 region = data["region"]
@@ -534,6 +542,77 @@ st.caption(
     "Benchmark differences are diagnostic signals, "
     "not confirmed causes of underperformance."
 )
+
+
+# ---------------------------------------------------------
+# STORE GP MARGIN DECOMPOSITION
+# ---------------------------------------------------------
+
+st.markdown("#### GP Margin Decomposition")
+
+selected_decomposition = decomposition_data.loc[
+    (decomposition_data["store_id"] == selected_store_id)
+    & (
+        pd.to_datetime(decomposition_data["month"]).dt.date
+        == selected_month
+    )
+].copy()
+
+if len(selected_decomposition) != 1:
+    st.warning(
+        "Margin decomposition is unavailable for the selected "
+        "store and reporting month."
+    )
+else:
+    decomposition_row = selected_decomposition.iloc[0]
+
+    # Compare unrounded reporting values to avoid rounding artefacts.
+    decomposition_store_margin = (
+        float(decomposition_row["store_gp_cents"])
+        / float(decomposition_row["store_sales_cents"])
+        * 100
+    )
+    if abs(decomposition_store_margin - store_margin_pct) > 0.01:
+        st.error("Decomposition margin does not match store reporting.")
+        st.stop()
+
+    waterfall_fig = gp_margin_waterfall_chart(decomposition_row)
+    st.plotly_chart(
+        waterfall_fig,
+        width="stretch",
+        config={"displayModeBar": False},
+    )
+
+    mix_effect = float(decomposition_row["mix_effect_pp"])
+    margin_effect = float(decomposition_row["margin_effect_pp"])
+    actual_gap = float(decomposition_row["actual_gap_pp"])
+
+    if abs(margin_effect) > abs(mix_effect):
+        larger_contribution = "within-category margin differences"
+    elif abs(mix_effect) > abs(margin_effect):
+        larger_contribution = "category sales mix differences"
+    else:
+        larger_contribution = "both components equally"
+
+    st.markdown("##### Investigation Summary")
+    st.write(
+        f"{selected_store_id} recorded a GP margin of "
+        f"{decomposition_store_margin:.2f}% against the "
+        f"NZ benchmark of "
+        f"{float(decomposition_row['benchmark_gp_margin_pct']):.2f}% "
+        f"({actual_gap:+.2f} pp). "
+        f"The model attributes {mix_effect:+.2f} pp to category "
+        f"sales mix and {margin_effect:+.2f} pp to "
+        f"within-category margins. The larger absolute "
+        f"contribution is from {larger_contribution}."
+    )
+    st.caption(
+        "Suggested follow-up: examine category-level sales shares "
+        "and margins, then investigate pricing, discounts, product "
+        "costs and transaction mix if supporting operational data "
+        "becomes available. These are hypotheses, not confirmed "
+        "causes. The NZ benchmark includes the selected store."
+    )
 
 
 # ---------------------------------------------------------

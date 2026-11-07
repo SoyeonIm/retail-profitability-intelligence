@@ -980,3 +980,114 @@ def store_margin_heatmap_chart(
     )
 
     return apply_chart_theme(fig)
+
+
+def gp_margin_waterfall_chart(decomposition_row):
+    """Build a reconciled store GP margin waterfall chart."""
+
+    import math
+    import plotly.graph_objects as go
+
+    benchmark = float(
+        decomposition_row["benchmark_gp_margin_pct"]
+    )
+    mix_effect = float(
+        decomposition_row["mix_effect_pp"]
+    )
+    margin_effect = float(
+        decomposition_row["margin_effect_pp"]
+    )
+    store_margin = float(
+        decomposition_row["store_gp_margin_pct"]
+    )
+
+    values = [
+        benchmark,
+        mix_effect,
+        margin_effect,
+        store_margin,
+    ]
+
+    if not all(math.isfinite(value) for value in values):
+        raise ValueError(
+            "Waterfall inputs must be finite numeric values."
+        )
+
+    calculated_margin = (
+        benchmark + mix_effect + margin_effect
+    )
+
+    if abs(calculated_margin - store_margin) > 0.0001:
+        raise ValueError(
+            "Waterfall does not reconcile to store GP margin."
+        )
+
+    fig = go.Figure(
+        go.Waterfall(
+            orientation="v",
+            measure=[
+                "absolute",
+                "relative",
+                "relative",
+                "total",
+            ],
+            x=[
+                "NZ Benchmark",
+                "Category Mix",
+                "Category Margin",
+                "Store GP Margin",
+            ],
+            y=[
+                benchmark,
+                mix_effect,
+                margin_effect,
+                0,
+            ],
+            text=[
+                f"{benchmark:.2f}%",
+                f"{mix_effect:+.2f} pp",
+                f"{margin_effect:+.2f} pp",
+                f"{store_margin:.2f}%",
+            ],
+            textposition="outside",
+            connector={
+                "line": {
+                    "color": "#B6C2D2",
+                    "width": 1,
+                }
+            },
+            increasing={
+                "marker": {"color": "#527C9B"}
+            },
+            decreasing={
+                "marker": {"color": "#B65C65"}
+            },
+            totals={
+                "marker": {"color": "#243B5A"}
+            },
+            hovertemplate=(
+                "%{x}<br>"
+                "%{text}<extra></extra>"
+            ),
+        )
+    )
+
+    fig.update_layout(
+        title=None,
+        height=420,
+        margin=dict(l=35, r=35, t=45, b=45),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#243B5A", size=12),
+        showlegend=False,
+        waterfallgap=0.35,
+    )
+
+    fig.update_yaxes(
+        title_text="GP Margin (%)",
+        ticksuffix="%",
+        gridcolor="#E8EDF3",
+        zeroline=False,
+    )
+
+    return fig
